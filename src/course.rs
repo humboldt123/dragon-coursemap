@@ -13,15 +13,20 @@ pub struct Course {
 impl Course {
     pub async fn new(code: &str) -> Course {
         let coursedata = Self::get_raw_coursedata(code).await.unwrap();
-        let raw_prerequisite_data = Self::pull_coursedata(&coursedata, r#"<b>Prerequisites:</b> (.*?)\n<br/><br/></div>"#);
+        let mut prerequisites: Vec<Vec<String>> = vec![];
         
-        // todo: error handling
-        // todo: some courses do not have prereqs. so, again, error handling
+        // if this course has prerequisites, add them to our array
+        match Self::pull_coursedata(&coursedata, r#"<b>Prerequisites:</b> (.*?)\n<br/><br/></div>"#) {
+            Ok(value) => prerequisites = Self::parse_prerequisites(&value),
+            _ => (), // if not leave prerequisites empty
+        }
+
+        // todo: if course is empty return an empty course struct (or panic?)
         Course {
             code: code.to_string(),
-            name: Self::pull_coursedata(&coursedata, r#"</span><span class='cdspacing'>(.*?)</span>"#),
-            description: Self::pull_coursedata(&coursedata, r#"<p class="courseblockdesc">\n(.*?)<br />\n"#),
-            prerequisites: Self::parse_prerequisites(&raw_prerequisite_data)
+            name: Self::pull_coursedata(&coursedata, r#"</span><span class='cdspacing'>(.*?)</span>"#).unwrap(),
+            description: Self::pull_coursedata(&coursedata, r#"<p class="courseblockdesc">\n(.*?)<br />\n"#).unwrap(),
+            prerequisites: prerequisites
         }
     }
 
@@ -30,13 +35,13 @@ impl Course {
         reqwest::get(base_url + course).await.unwrap().text().await
     }
 
-    fn pull_coursedata(coursedata: &str, regex: &str) -> String {
+    fn pull_coursedata(coursedata: &str, regex: &str) -> Result<String, String>{
         let pattern = Regex::new(regex).unwrap();
         if let Some(captures) = pattern.captures(coursedata) {
             let content = captures.get(1).unwrap().as_str();
-            content.to_string()
+            Ok(content.to_string())
         } else {
-            panic!("Failed to parse out coursedata with: {}", regex);
+            Err(format!("Failed to parse course data with pattern: {}", regex))
         }
     }
 
@@ -50,11 +55,12 @@ impl Course {
         for item in cleaned.split(" and ").collect::<Vec<&str>>() {
             if item.contains('(') {
                 // If it contains a bracket, the student just has to fufill one of the prerequisites from the list. ie; (MATH 221 or MATH 222)
-                let mut selectable_prerequisite: Vec<String> = vec![];
+                let mut selectable_prerequisites: Vec<String> = vec![];
+                // get rid of the brackets with substring
                 for course in item[1..item.len() - 1].split(" or ").collect::<Vec<&str>>() {
-                    selectable_prerequisite.push(course.to_string());
+                    selectable_prerequisites.push(course.to_string());
                 }
-                prerequisites.push(selectable_prerequisite)
+                prerequisites.push(selectable_prerequisites)
             } else {
                 prerequisites.push(vec![item.to_string()]);
             }
